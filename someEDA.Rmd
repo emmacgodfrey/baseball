@@ -1,0 +1,68 @@
+---
+title: "initialEDA"
+author: "Emma Godfrey"
+date: "12/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pitches <- read.csv("~/Downloads/archive/pitches.csv")
+```
+```{r}
+library(tidyverse)
+```
+
+```{r}
+set.seed(10)
+rsamp <- sample(nrow(pitches), 0.3*nrow(pitches), replace= FALSE)
+pitches.sample <- pitches[rsamp,]
+
+# only consider out of zone strikes
+pitches.s.ooz <- pitches %>% 
+  filter(zone == 11 | zone == 12 | zone == 13 | zone ==14) %>% 
+  filter(type == "S")
+
+# only consider events where the batter swings at the ball
+pitches.s.x <- pitches %>% 
+  filter(is.na(pitches) == FALSE) %>% 
+  filter(code == "F" & type == "S" | code == "X" & type == "X" | code == "W" & type == "S" | code == "S" & type == "S") %>%
+  mutate(swing.miss = ifelse(code == "W" & type == "S" | code == "S" & type == "S", 1,0))
+
+```
+```{r}
+library("scatterplot3d")
+pitches.no.na <- pitches %>% 
+  filter(is.na(pitches) == FALSE)
+
+pitches.no.na <- pitches.no.na[sample(nrow(pitches.no.na),100, replace = FALSE),]
+pitches.no.na$type <- as.factor(pitches.no.na$type)
+colors <- c("red", "blue", "orange")
+colors <- colors[as.numeric(pitches.no.na$type)]
+s3d <- scatterplot3d(x=pitches.no.na$end_speed, y=pitches.no.na$spin_rate, z= pitches.no.na$spin_dir, pch= 16, color = colors, main = "End speed, spin rate, and spin direction to predict pitch outcome", xlab = "Pitch End Speed (MPH)", zlab = "Spin Direction (degrees)", ylab = "Spin Rate (RPM)")
+legend(s3d$xyz.convert(95, 500, 50), col= c("red", "blue", "orange"), bg="white", lty=c(1,1), lwd=2, yjust=0, legend = c("ball", "strike", "in play"), cex = 0.5)
+```
+
+```{r}
+pitches.s.x2 <- pitches.s.x[sample(nrow(pitches.s.x), 0.001*nrow(pitches.s.x), replace = FALSE),]
+pitches.s.x2$type <- as.factor(pitches.s.x2$type)
+colors <- c("red", "blue")
+colors <- colors[as.numeric(pitches.s.x2$type)]
+s3d <- scatterplot3d(x=pitches.s.x2$end_speed, y=pitches.s.x2$spin_rate, z= pitches.s.x2$spin_dir, pch= 16, color = colors, main = "End speed, spin rate, and spin direction to predict pitch outcome", xlab = "Pitch End Speed (MPH)", zlab = "Spin Direction (degrees)", ylab = "Spin Rate (RPM)")
+legend(s3d$xyz.convert(95, 500, 50), col= c("red", "blue"), bg="white", lty=c(1,1), lwd=2, yjust=0, legend = c("Swing and miss","Swing and hit"), cex = 0.5)
+```
+```{r training and testing}
+set.seed(100)
+pitches.s.x2 <- pitches.s.x[sample(nrow(pitches.s.x), 0.3*nrow(pitches.s.x), replace = FALSE),]
+train.samp <- sample(nrow(pitches.s.x2), 0.7*nrow(pitches.s.x2), replace = FALSE)
+training <- pitches.s.x[train.samp,-c(28,29)]
+testing <- pitches.s.x[-train.samp,-c(28,29)]
+```
+
+```{r random forest}
+library(tune)
+library(randomForest)
+
+rf.1 <- tuneRF(training[,-39], training[,39], ntreeTry = 50, stepFactor = 1.5)
+```
+
