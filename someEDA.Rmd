@@ -16,49 +16,105 @@ library("tune")
 library("randomForest")
 library("ROCR")
 library("ROSE")
-library("neuralnet")
-```
-
-```{r}
-set.seed(10)
-# only consider events where the batter swings at the ball
-pitches.s.x <- pitches %>% 
-  filter(is.na(pitches) == FALSE) %>% 
-  filter(code == "F" & type == "S" | code == "X" & type == "X" | code == "W" & type == "S" | code == "S" & type == "S") %>%
-  mutate(swing.miss = ifelse(code == "W" & type == "S" | code == "S" & type == "S", 1,0))
-
-pitches.s.x$swing.miss <- as.factor(pitches.s.x$swing.miss)
-```
-
-```{r}
+library("ggplot2")
+library("reshape2")
 library("scatterplot3d")
-pitches.no.na <- pitches %>% 
-  filter(is.na(pitches) == FALSE)
-
-pitches.no.na <- pitches.no.na[sample(nrow(pitches.no.na),100, replace = FALSE),]
-pitches.no.na$type <- as.factor(pitches.no.na$type)
-colors <- c("red", "blue", "orange")
-colors <- colors[as.numeric(pitches.no.na$type)]
-s3d <- scatterplot3d(x=pitches.no.na$end_speed, y=pitches.no.na$spin_rate, z= pitches.no.na$spin_dir, pch= 16, color = colors, main = "End speed, spin rate, and spin direction to predict pitch outcome", xlab = "Pitch End Speed (MPH)", zlab = "Spin Direction (degrees)", ylab = "Spin Rate (RPM)")
-legend(s3d$xyz.convert(95, 500, 50), col= c("red", "blue", "orange"), bg="white", lty=c(1,1), lwd=2, yjust=0, legend = c("ball", "strike", "in play"), cex = 0.5)
 ```
 
 ```{r}
-pitches.s.x2 <- pitches.s.x[sample(nrow(pitches.s.x), 0.001*nrow(pitches.s.x), replace = FALSE),]
-pitches.s.x2$type <- as.factor(pitches.s.x2$type)
-colors <- c("red", "blue")
-colors <- colors[as.numeric(pitches.s.x2$type)]
-s3d <- scatterplot3d(x=pitches.s.x2$end_speed, y=pitches.s.x2$spin_rate, z= pitches.s.x2$spin_dir, pch= 16, color = colors, main = "End speed, spin rate, and spin direction to predict pitch outcome", xlab = "Pitch End Speed (MPH)", zlab = "Spin Direction (degrees)", ylab = "Spin Rate (RPM)")
-legend(s3d$xyz.convert(95, 500, 50), col= c("red", "blue"), bg="white", lty=c(1,1), lwd=2, yjust=0, legend = c("Swing and miss","Swing and hit"), cex = 0.5)
+# only consider events where the batter swings at the ball
+pitches <- pitches %>% 
+  filter(is.na(pitches) == FALSE) %>% 
+  filter(code %in% c("L", "T", "F", "X", "D", "E", "S", "W", "M")) %>% 
+  mutate(swing.miss = ifelse(code == "S" & type == "S" | code == "W" & type == "S" | code == "M" & type == "S", 1, 0))
+
+pitches$swing.miss <- as.factor(pitches$swing.miss)
+```
+
+```{r}
+set.seed(100)
+pitches$type <- as.factor(pitches$type)
+
+pitches.samp <- pitches[sample(nrow(pitches),700, replace = FALSE),]
+
+colors <- c("red", "blue", alpha = 0.2)
+colors <- colors[as.numeric(pitches.samp$swing.miss)]
+s3d <- scatterplot3d(x=pitches.samp$pfx_x, y=pitches.samp$pfx_z, z= pitches.samp$end_speed, pch= 10, color = colors, main = "Pitch speed and change in trajectory to predict swing contact", xlab = "Change in horizontal trajectory (pfx_x)", zlab = "End speed", ylab = "Change in vertical trajectory (pfx_z)")
+legend(s3d$xyz.convert(10, -10,60), col= c("red", "blue"), bg="white", lty=c(1,1), lwd=2, yjust=0, legend = c("Swing & contact", "Swing & no contact"), cex = 0.5)
+
+```
+
+
+```{r}
+p <- ggplot(data = pitches.samp, mapping = aes(x=pfx_x, y=pfx_z, color = swing.miss)) + 
+  geom_point(aes(alpha = end_speed)) + labs(x="Change in Horizontal Trajectory (pfx_x)", y="Change in Vertical Trajectory (pfx_z)", color = "Contact (0=yes, 1 =no)", alpha = "End Speed", title = "Will the batter make contact?", subtitle = "the change in horizontal/vertical trajectory and end speed of pitch affecting contact likelihood") + 
+  theme_minimal() +theme(plot.title = element_text(face = "bold"))
+```
+
+fastball, changeup, curveball, slider
+
+```{r}
+pitches3 <- pitches %>% 
+  filter(pitch_type == "CH" | pitch_type == "CU" | pitch_type == "SL" | pitch_type == "FF"| pitch_type == "FT")
+
+ggplot(data=pitches3, aes(x=pitch_type, fill = swing.miss)) + 
+  geom_bar() + 
+  labs(x="Pitch Type", y="Contact vs. No Contact Count", fill = "Ball Contact (0=yes, 1 =no)", title = "Pitch Type and Contact") + 
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+```{r}
+ggplot(data = pitches.samp, aes(color=swing.miss)) + 
+  geom_point(aes(x=spin_rate, y = spin_dir))
+
+pitches.samp.fastball <- pitches %>% 
+  filter(pitch_type == "FF" | pitch_type == "FT")
+
+pitches.samp.curveball <- pitches %>% 
+  filter(pitch_type == "CU")
+
+pitches.samp.change <- pitches %>% 
+  filter(pitch_type == "CH")
+
+
+fast <- ggplot(data = pitches.samp.fastball[1:500,], aes(color=swing.miss)) + 
+  geom_point(aes(x=spin_rate, y = spin_dir)) + 
+  labs(x = "Spin Rate (RPM)", y = "Spin Direction (degrees)", title = "Do fastball spin properties affect contact likelihood?",color = "Ball Contact (0=yes, 1 =no)")+ 
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+curve <- ggplot(data = pitches.samp.curveball[1:500,], aes(color=swing.miss)) +
+  geom_point(aes(x=spin_rate, y = spin_dir)) + 
+  labs(x = "Spin Rate (RPM)", y = "Spin Direction (degrees)", title = "Do curveball spin properties affect contact likelihood?",color = "Ball Contact (0=yes, 1 =no)") + 
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+change <- ggplot(data = pitches.samp.change[1:500,], aes(color=swing.miss)) + 
+  geom_point(aes(x=spin_rate, y = spin_dir)) + 
+  labs(x = "Spin Rate (RPM)", y = "Spin Direction (degrees)", title = "Do changeup spin properties affect contact likelihood?",color = "Ball Contact (0=yes, 1 =no)") + 
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+ggplot(data=pitches3, aes(x=zone, fill = swing.miss)) + 
+  geom_bar() + 
+  labs(x="Zone", y="Contact vs. No Contact Count", fill = "Ball Contact (0=yes, 1=no)", title = "Zone and Contact") + 
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+```
+
+```{r}
+set.seed(100)
+pitches5 <- pitches[sample(nrow(pitches), 0.05*nrow(pitches), replace = FALSE),]
+pitches5$type <- as.factor(pitches5$type)
 ```
 
 
 ```{r training and testing}
 set.seed(100)
-pitches.s.x2 <- pitches.s.x[sample(nrow(pitches.s.x), 0.1*nrow(pitches.s.x), replace = FALSE),]
-train.samp <- sample(nrow(pitches.s.x2), 0.8*nrow(pitches.s.x2), replace = FALSE)
-training <- pitches.s.x2[train.samp,-c(28,29)]
-testing <- pitches.s.x2[-train.samp,-c(28,29)]
+train.samp <- sample(nrow(pitches5), 0.7*nrow(pitches5), replace= FALSE)
+training <- pitches5[train.samp,-c(28, 29,31,32,33,34,35,36,37,38,39,40)]
+testing <- pitches5[-train.samp,-c(28, 29,31,32,33,34,35,36,37,38,39,40)]
 ```
 
 ```{r random forest}
@@ -68,18 +124,30 @@ training.balanced <- ovun.sample(swing.miss~., data = training, method = "over")
 # balanced dataset 
 table(training.balanced$swing.miss)
 
+# random sample to build models on 
+model.samp <- sample(nrow(training.balanced), 0.5*nrow(training.balanced), replace=FALSE)
+training.build.model <- training.balanced[model.samp,]
+training.build.model$zone <- as.factor(trainig.build.model$zone)
+training.build.model$pitch_type <- as.factor(trainig.build.model$pitch_type)
+training.build.model$nasty <- as.numeric(training.build.model$nasty)
+
 # tune mtry -- # of variables randomly chosen to split on at each tree
-rf.tune <- tuneRF(training.balanced[,-39], training.balanced[,39], ntreeTry = 50, plot = TRUE)
-rf.tune
-rf1 <- randomForest(swing.miss ~ ., data = training.balanced, ntree=200, mtry=3)
+rf.tune <- tuneRF(training.build.model[,-29], training.balanced[,29], ntreeTry = 50, verbose=TRUE)
+
+rf1 <- randomForest(swing.miss ~ ., data = training.balanced[], ntree=200, mtry=3, do.trace = 100)
 
 # testing data predictions 
-predictions <- as.matrix(predict(rf1, testing[-39], type="prob"))
-pred <- prediction(predictions[,2], testing[,39])
-perf <- performance(pred, measure = "tpr", x.measure = "fpr")
-plot(perf, col="blue")
+predictions <- predict(rf1, newdata = testing[,-39],type="prob") 
+testing.labels <- as.numeric(as.character(testing[,30]))
 
-# AUC -- 0.759
+pred <- prediction(predictions[,2], testing[,39])
+
+library("ROCR")
+table(observed = testing[,30], predicted = predictions)
+perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+plot(perf, col="blue", main= "Random Forest Performance (AUROC = 0.765)")
+
+# AUC -- 0.7646
 auc.perf <- performance(pred, measure = "auc")
 print(auc.perf@y.values)
 
@@ -92,7 +160,7 @@ giniplot <- barplot(t(varimp1[-2]/sum(varimp1[-2])),las=2,
                      cex.names=1,
                     main="Gini Impurity Index Plot")
 
-
+varImpPlot(rf1, n.var =10, main ="Random Forest Variable Importance")
 # visualization of predictions
 
 plot.learner <- function(fit, x1LB, x1UB, x2LB, x2UB, data) {
@@ -145,5 +213,26 @@ plot(nn)
 
 pred.nn <- compute(nn, testing)
 pred.nn
+```
+
+```{r}
+library("e1071")
+tune_out <- tune.svm(swing.miss ~., data = training.balanced[sample(nrow(training.balanced), 0.5*nrow(training.balanced), replace =FALSE),],gamma = 2^c(-8,-4,0,4), cost = 2^c(-8,-4,-2,0))
+
+svmfit1 <- svm(swing.miss~., data = training.balanced[sample,], type = 'C-classification', verbose=TRUE)
+
+sample <- sample(nrow(training.balanced), 0.1*nrow(training.balanced), replace=FALSE)
+
+print(svmfit1)
+princomp <- prcomp(training.balanced[,-c(28,29,39)])
+
+training.balanced$nasty <- as.numeric(training.balanced$nasty)
+training.balanced$zone <- as.numeric(training.balanced$zone)
+
+
+pred.svm <- predict(svmfit1, training.balanced[,-c(39)])
+
+plot(svm, mode="pca")
+
 ```
 
