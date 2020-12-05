@@ -7,29 +7,29 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pitches <- read.csv("~/Downloads/archive/pitches.csv")
+pitches <- read.csv("~/Downloads/pitches.csv")
 ```
+
 ```{r}
-library(tidyverse)
+library("tidyverse")
+library("tune")
+library("randomForest")
+library("ROCR")
+library("ROSE")
+library("neuralnet")
 ```
 
 ```{r}
 set.seed(10)
-rsamp <- sample(nrow(pitches), 0.3*nrow(pitches), replace= FALSE)
-pitches.sample <- pitches[rsamp,]
-
-# only consider out of zone strikes
-pitches.s.ooz <- pitches %>% 
-  filter(zone == 11 | zone == 12 | zone == 13 | zone ==14) %>% 
-  filter(type == "S")
-
 # only consider events where the batter swings at the ball
 pitches.s.x <- pitches %>% 
   filter(is.na(pitches) == FALSE) %>% 
   filter(code == "F" & type == "S" | code == "X" & type == "X" | code == "W" & type == "S" | code == "S" & type == "S") %>%
   mutate(swing.miss = ifelse(code == "W" & type == "S" | code == "S" & type == "S", 1,0))
 
+pitches.s.x$swing.miss <- as.factor(pitches.s.x$swing.miss)
 ```
+
 ```{r}
 library("scatterplot3d")
 pitches.no.na <- pitches %>% 
@@ -51,18 +51,99 @@ colors <- colors[as.numeric(pitches.s.x2$type)]
 s3d <- scatterplot3d(x=pitches.s.x2$end_speed, y=pitches.s.x2$spin_rate, z= pitches.s.x2$spin_dir, pch= 16, color = colors, main = "End speed, spin rate, and spin direction to predict pitch outcome", xlab = "Pitch End Speed (MPH)", zlab = "Spin Direction (degrees)", ylab = "Spin Rate (RPM)")
 legend(s3d$xyz.convert(95, 500, 50), col= c("red", "blue"), bg="white", lty=c(1,1), lwd=2, yjust=0, legend = c("Swing and miss","Swing and hit"), cex = 0.5)
 ```
+
+
 ```{r training and testing}
 set.seed(100)
-pitches.s.x2 <- pitches.s.x[sample(nrow(pitches.s.x), 0.3*nrow(pitches.s.x), replace = FALSE),]
-train.samp <- sample(nrow(pitches.s.x2), 0.7*nrow(pitches.s.x2), replace = FALSE)
-training <- pitches.s.x[train.samp,-c(28,29)]
-testing <- pitches.s.x[-train.samp,-c(28,29)]
+pitches.s.x2 <- pitches.s.x[sample(nrow(pitches.s.x), 0.1*nrow(pitches.s.x), replace = FALSE),]
+train.samp <- sample(nrow(pitches.s.x2), 0.8*nrow(pitches.s.x2), replace = FALSE)
+training <- pitches.s.x2[train.samp,-c(28,29)]
+testing <- pitches.s.x2[-train.samp,-c(28,29)]
 ```
 
 ```{r random forest}
-library(tune)
-library(randomForest)
+# up-sampling
+training.balanced <- ovun.sample(swing.miss~., data = training, method = "over")$data
 
-rf.1 <- tuneRF(training[,-39], training[,39], ntreeTry = 50, stepFactor = 1.5)
+# balanced dataset 
+table(training.balanced$swing.miss)
+
+# tune mtry -- # of variables randomly chosen to split on at each tree
+rf.tune <- tuneRF(training.balanced[,-39], training.balanced[,39], ntreeTry = 50, plot = TRUE)
+rf.tune
+rf1 <- randomForest(swing.miss ~ ., data = training.balanced, ntree=200, mtry=3)
+
+# testing data predictions 
+predictions <- as.matrix(predict(rf1, testing[-39], type="prob"))
+pred <- prediction(predictions[,2], testing[,39])
+perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+plot(perf, col="blue")
+
+# AUC -- 0.759
+auc.perf <- performance(pred, measure = "auc")
+print(auc.perf@y.values)
+
+# importance plot 
+var.imp1 <- data.frame(importance(rf1, type=2))
+var.imp1$Variables <- row.names(var.imp1)
+varimp1 <- var.imp1[order(var.imp1$MeanDecreaseGini,decreasing = T),]
+par(mar=c(10,5,1,1)) 
+giniplot <- barplot(t(varimp1[-2]/sum(varimp1[-2])),las=2,
+                     cex.names=1,
+                    main="Gini Impurity Index Plot")
+
+
+# visualization of predictions
+
+plot.learner <- function(fit, x1LB, x1UB, x2LB, x2UB, data) {
+#Plots preimage of linear decision boundary generated in 3 space by added basis function
+#Inputs
+# fit: svm object
+# x1LB, x1UB: lower and upper bounds for variable x1
+# x2LB, x2UB: lower and upper bounds for variable x2
+# data: data frame containing variables, need to have variables named y, x1 and x2
+x1.grid <- seq(x1LB, x1UB, length.out=100)
+x2.grid <- seq(x2LB, x2UB, length.out=100)
+data.pred <- c()
+for (i in 1:length(x1.grid)) {
+for (j in 1:length(x2.grid)) {
+data.pred <- rbind(data.pred, c(x1.grid[i], x2.grid[j]))
+}
+}
+data.pred <- as.data.frame(data.pred)
+names(data.pred) <- c('x1', 'x2')
+plot(data$x1,data$x2,col=as.numeric(data$y)+8)
+points(data.pred[,1:2],col=as.numeric(predict(fit, newdata=data.pred))+2, cex=.2)
+}
+
+data.temp <- training.balanced
+names(data.temp)[39] <- "y"
+names(data.temp)[3] <- "x1"
+names(data.temp)[5] <- "x2"
+data.temp$y <- as.factor(data.temp$y)
+data.temp1 <- data.temp[,c(3,5,39)]
+
+
+plot.learner(rf1, min(data.temp$x1), max(data.temp$x1), min(data.temp$x2), max(data.temp$x2), data.temp1)
+```
+
+
+```{r neural networks}
+# remove ordinal columns and scale data 
+scaled <- apply(training.balanced[,-c(27, 28,39)], 2, scale)
+scaled.joined <- data.frame(cbind(scaled, training.balanced[,c(27, 28,39)]))
+
+scaled.joined.x <- as.matrix(scaled.joined[,-39])
+scaled.joined.y <- as.matrix(scaled.joined[,39])
+scaled.joined.clean <- scaled.joined[,-c(37,38)]
+
+
+nn <- neuralnet(swing.miss ~ px + pz + start_speed + end_speed + spin_rate + spin_dir + break_angle + break_length, data = scaled.joined.clean[1:5000,], hidden=c(2,1), linear.output=FALSE, threshold=0.01)
+
+nn$result.matrix
+plot(nn)
+
+pred.nn <- compute(nn, testing)
+pred.nn
 ```
 
